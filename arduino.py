@@ -16,9 +16,9 @@ int blue;
 /* This function "Set Color" will set the color of the LED
    rather than doing it over and over in the loop. */
 void setColor(int R, int G, int B) {
-  analogWrite(PIN_RED,   R);
-  analogWrite(PIN_GREEN, G);
-  analogWrite(PIN_BLUE,  B);
+  analogWrite(PIN_RED,   255 - R);
+  analogWrite(PIN_GREEN, 255 - G);
+  analogWrite(PIN_BLUE,  255 - B);
 }
  
 void setup() {
