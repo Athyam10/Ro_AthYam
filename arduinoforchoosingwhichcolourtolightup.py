@@ -4,10 +4,9 @@ const int PIN_BLUE  = 11;
 
 // Function to set color for common anode RGB LED
 void setColor(int R, int G, int B) {
-  // Invert values for common anode
-  analogWrite(PIN_RED,   255 - R);
-  analogWrite(PIN_GREEN, 255 - G);
-  analogWrite(PIN_BLUE,  255 - B);
+  analogWrite(PIN_RED,   R);
+  analogWrite(PIN_GREEN, G);
+  analogWrite(PIN_BLUE,  B);
 }
 
 void setup() {
