@@ -1,31 +1,75 @@
 import serial
 import matplotlib.pyplot as plt
-import re
+import numpy as np
+from matplotlib.animation import FuncAnimation
 
-# CHANGE THIS TO YOUR ARDUINO PORT
-ser = serial.Serial('COM9', 115200)
+# -------- SERIAL PORT --------
+# Change COM port depending on your system
+ser = serial.Serial('COM3',115200,timeout=1)
 
-sensor_values = [0,0,0,0,0,0]
+# -------- SENSOR VARIABLES --------
+S1=S2=S3=S4=S5=S6=0
 
-plt.ion()
-fig, ax = plt.subplots()
+# -------- RADAR ANGLES --------
+angles = np.deg2rad([0,90,180,270])   # front,right,back,left
 
-bars = ax.bar(["S1","S2","S3","S4","S5","S6"], sensor_values)
+# -------- FIGURE SETUP --------
+fig = plt.figure(figsize=(10,5))
 
-ax.set_ylim(0, 400)
-ax.set_ylabel("Distance (cm)")
-ax.set_title("Ultrasonic Sensor Distances")
+ax1 = fig.add_subplot(121, polar=True)
+ax2 = fig.add_subplot(122)
 
-while True:
+# radar limits
+ax1.set_ylim(0,200)
 
-    line = ser.readline().decode('utf-8').strip()
+# bar graph
+bars = ax2.bar(["Top (S1)","Bottom (S2)"],[0,0])
+ax2.set_ylim(0,200)
+ax2.set_ylabel("Distance (cm)")
 
-    numbers = re.findall(r'\d+', line)
+# -------- UPDATE FUNCTION --------
+def update(frame):
 
-    if len(numbers) >= 6:
-        sensor_values = list(map(int, numbers[:6]))
+    global S1,S2,S3,S4,S5,S6
 
-        for bar, val in zip(bars, sensor_values):
-            bar.set_height(val)
+    try:
+        line = ser.readline().decode().strip()
 
-        plt.pause(0.01)
+        if "S1" in line:
+
+            parts=line.replace("cm","").replace(":","").split()
+
+            S1=int(parts[1])
+            S2=int(parts[3])
+            S3=int(parts[5])
+            S4=int(parts[7])
+            S5=int(parts[9])
+            S6=int(parts[11])
+
+    except:
+        return
+
+    # -------- RADAR DATA --------
+    radar_values=[S3,S4,S5,S6]
+
+    ax1.clear()
+    ax1.set_ylim(0,200)
+    ax1.set_title("Rover Obstacle Radar")
+
+    ax1.plot(angles,radar_values,'o-',linewidth=2)
+    ax1.fill(angles,radar_values,alpha=0.25)
+
+    ax1.set_thetagrids([0,90,180,270],
+                       labels=["Front(S3)","Right(S4)","Back(S5)","Left(S6)"])
+
+    # -------- BAR GRAPH --------
+    bars[0].set_height(S1)
+    bars[1].set_height(S2)
+
+    ax2.set_title("Vertical Clearance")
+
+# -------- ANIMATION --------
+ani = FuncAnimation(fig,update,interval=100)
+
+plt.tight_layout()
+plt.show()
