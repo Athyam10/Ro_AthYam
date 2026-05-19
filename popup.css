@@ -1,0 +1,97 @@
+.popup {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+
+  justify-content: center;
+  align-items: center;
+}
+
+/* Bigger popup window */
+.popup-content {
+
+  background: white;
+
+  padding: 30px;
+
+  border-radius: 15px;
+
+  width: 90%;
+  max-width: 1300px;
+
+  text-align: center;
+}
+
+/* Row containing both images */
+.image-row {
+
+  display: flex;
+
+  justify-content: center;
+
+  align-items: flex-start;
+
+  gap: 40px;
+
+  margin-top: 30px;
+
+  flex-wrap: wrap;
+}
+
+/* Images + canvas */
+img,
+canvas {
+
+  width: 500px;
+
+  max-width: 100%;
+
+  max-height: 500px;
+
+  object-fit: contain;
+
+  border: 2px solid #ccc;
+}
+
+/* Input + button area */
+.controls {
+
+  display: flex;
+
+  justify-content: center;
+
+  gap: 15px;
+
+  margin-top: 20px;
+
+  flex-wrap: wrap;
+}
+
+/* Buttons */
+button {
+
+  padding: 10px 20px;
+
+  border: none;
+
+  border-radius: 8px;
+
+  background: #007BFF;
+
+  color: white;
+
+  cursor: pointer;
+
+  font-size: 16px;
+}
+
+/* Input box */
+input {
+
+  padding: 10px;
+
+  width: 220px;
+
+  font-size: 16px;
+}

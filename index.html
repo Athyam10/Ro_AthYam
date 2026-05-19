@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>HSV Brightness Editor</title>
+
+<link rel="stylesheet" href="popup.css">
+<script src="conversion.js" defer></script>
+
+</head>
+
+<body>
+
+<button onclick="openPopup()">
+    Open HSV Editor
+</button>
+
+<div id="popup" class="popup">
+
+    <div class="popup-content">
+
+        <button onclick="closePopup()">
+            Close
+        </button>
+
+        <h1>HSV Brightness Editor</h1>
+
+        <div class="controls">
+
+            <input
+                type="number"
+                id="brightnessInput"
+                placeholder="Brightness (-100 to 100)"
+            >
+
+            <button onclick="runConversion()">
+                Update Image
+            </button>
+
+        </div>
+
+        <div class="image-row">
+
+            <div>
+                <h2>Original Image</h2>
+                <img
+                    id="originalDisplay"
+                    src="image.jpeg"
+                >
+            </div>
+
+            <div>
+                <h2>Edited Image</h2>
+                <canvas id="convertedCanvas"></canvas>
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+
+</body>
+</html>

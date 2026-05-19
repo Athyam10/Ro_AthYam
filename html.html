@@ -1,0 +1,23 @@
+<button onclick="openPopup()">View HSV Conversion</button>
+
+<div id="popup" class="popup">
+  <div class="popup-content">
+    <button onclick="closePopup()">Close</button>
+
+    <h2>RGB to HSV Conversion</h2>
+
+    <div class="image-row">
+      <div>
+        <h3>Original RGB Image</h3>
+        <img id="originalImage" src="standard-image.jpg" alt="Original image">
+      </div>
+
+      <div>
+        <h3>Converted HSV Result</h3>
+        <canvas id="convertedCanvas"></canvas>
+      </div>
+    </div>
+
+    <button onclick="runConversion()">Convert Image</button>
+  </div>
+</div>
