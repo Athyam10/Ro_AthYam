@@ -47,7 +47,7 @@ def update(frame):
             S6=int(parts[11])
 
     except:
-        return
+        return [bars[0], bars[1]]
 
     # -------- RADAR DATA --------
     radar_values=[S3,S4,S5,S6]
@@ -59,14 +59,15 @@ def update(frame):
     ax1.plot(angles,radar_values,'o-',linewidth=2)
     ax1.fill(angles,radar_values,alpha=0.25)
 
-    ax1.set_thetagrids([0,90,180,270],
-                       labels=["Front(S3)","Right(S4)","Back(S5)","Left(S6)"])
+    ax1.set_xticks(np.deg2rad([0,90,180,270]))
+    ax1.set_xticklabels(["Front(S3)","Right(S4)","Back(S5)","Left(S6)"])
 
     # -------- BAR GRAPH --------
     bars[0].set_height(S1)
     bars[1].set_height(S2)
 
     ax2.set_title("Vertical Clearance")
+    return [bars[0], bars[1]]
 
 # -------- ANIMATION --------
 ani = FuncAnimation(fig,update,interval=100)
