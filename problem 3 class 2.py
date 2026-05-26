@@ -1,15 +1,14 @@
 # =========================================================
-# EXACT HIGHWAY ROAD HIGHLIGHT
-# FIXED FOR YOUR IMAGE
+# HIGHWAY ROAD POLYGON USING DOTTED LANE REFERENCES
 # =========================================================
 #
 # THIS VERSION:
-# ----------------
-# - Starts polygons from screen edges
-# - Roads highlighted correctly
+# --------------
+# - Uses the lane marking perspective
+# - Follows actual highway direction
+# - Properly highlights both roads
 # - Divider ignored
-# - Perspective matches highway
-# - Top points reach horizon
+# - Fixed specifically for YOUR image
 #
 # =========================================================
 
@@ -37,89 +36,79 @@ final = image.copy()
 # LEFT ROAD POLYGON
 # =========================================================
 #
-# POINT ORDER:
-# -------------
-# bottom-left      -> screen corner
-# top-left         -> horizon left road
-# top-right        -> near divider
-# bottom-right     -> divider bottom
+# Follows LEFT dotted lane direction
 #
 # =========================================================
 
 left_road = np.array([
 
-    [0, 768],        # SCREEN BOTTOM LEFT CORNER
+    [0, 768],        # bottom left screen corner
 
-    [740, 300],      # TOP RIGHT
+    [615, 330],      # top left
 
-    [700, 300],      # TOP LEFT
+    [705, 330],      # top right near divider
 
-    [420, 768]       # BOTTOM RIGHT
+    [495, 768]       # bottom right near divider
 
 ], np.int32)
 
 # =========================================================
 # RIGHT ROAD POLYGON
 # =========================================================
+#
+# Follows RIGHT dotted lane direction
+#
+# =========================================================
 
 right_road = np.array([
 
-    [945, 768],      # BOTTOM LEFT
+    [870, 768],      # bottom left near divider
 
-    [820, 300],      # TOP LEFT
+    [760, 330],      # top left near divider
 
-    [860, 300],      # TOP RIGHT
+    [845, 330],      # top right
 
-    [1365, 768]      # SCREEN BOTTOM RIGHT CORNER
+    [1365, 768]      # bottom right screen corner
 
 ], np.int32)
 
 # =========================================================
-# DIVIDER POLYGON
+# CENTER DIVIDER
 # =========================================================
 
 divider = np.array([
 
-    [420, 768],
+    [495, 768],
 
-    [700, 300],
+    [705, 330],
 
-    [820, 300],
+    [760, 330],
 
-    [945, 768]
+    [870, 768]
 
 ], np.int32)
 
 # =========================================================
-# CREATE OVERLAY
+# OVERLAY
 # =========================================================
 
 overlay = final.copy()
 
-# ---------------------------------------------------------
-# LEFT ROAD FILL
-# ---------------------------------------------------------
-
+# LEFT ROAD COLOR
 cv2.fillPoly(
     overlay,
     [left_road],
     (255, 180, 0)
 )
 
-# ---------------------------------------------------------
-# RIGHT ROAD FILL
-# ---------------------------------------------------------
-
+# RIGHT ROAD COLOR
 cv2.fillPoly(
     overlay,
     [right_road],
     (0, 255, 100)
 )
 
-# =========================================================
 # BLEND
-# =========================================================
-
 cv2.addWeighted(
     overlay,
     0.35,
@@ -136,11 +125,11 @@ cv2.addWeighted(
 cv2.fillPoly(
     final,
     [divider],
-    (40, 40, 40)
+    (35, 35, 35)
 )
 
 # =========================================================
-# DRAW BOUNDARIES
+# DRAW BOUNDARY LINES
 # =========================================================
 
 cv2.polylines(
@@ -160,7 +149,7 @@ cv2.polylines(
 )
 
 # =========================================================
-# TEXT
+# DIRECTION TEXT
 # =========================================================
 
 cv2.putText(
