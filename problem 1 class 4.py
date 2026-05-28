@@ -115,7 +115,7 @@ polygon = np.array([[
 
 ]], np.int32)
 
-cv2.fillPoly(mask, polygon, 255)
+cv2.fillPoly(mask, [polygon], 255)
 
 roi = cv2.bitwise_and(edges, mask)
 
