@@ -1,24 +1,35 @@
 # ============================================================
-# SMART ROAD COUNTING + ROAD TYPE DETECTION
+# REFINED UNIVERSAL ROAD EDGE + LANE DETECTION
 # ============================================================
 #
 # THIS VERSION FIXES:
 #
-# ❌ Old problem:
-# Always detecting 2 roads
+# ❌ Detecting random edges
+# ❌ Detecting trees/grass
+# ❌ Wrong road count
+# ❌ Weak lane detection
 #
-# ✅ New version:
+# ✅ NEW FEATURES:
 #
-# Automatically detects:
+# 1. Detects ONLY:
+#       - Outer road edges
+#       - Important lane markings
 #
-# - 1 road
-# - 2 roads
+# 2. Automatically detects:
+#       - Single road
+#       - Double road
 #
-# by checking:
+# 3. Uses:
+#       - Perspective-based ROI
+#       - Strong edge filtering
+#       - Slope filtering
+#       - Position filtering
+#       - Line grouping
 #
-# 1. Road boundary spacing
-# 2. Divider width
-# 3. Number of major vertical boundaries
+# 4. Detects:
+#       - LEFT TURN
+#       - RIGHT TURN
+#       - STRAIGHT
 #
 # ============================================================
 
@@ -40,16 +51,37 @@ original = image.copy()
 height, width = image.shape[:2]
 
 # ------------------------------------------------------------
-# CONVERT TO GRAYSCALE
+# CONVERT TO HSV
+# ------------------------------------------------------------
+#
+# HSV helps isolate white road markings
+#
 # ------------------------------------------------------------
 
-gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+# ------------------------------------------------------------
+# DETECT WHITE ROAD LINES
+# ------------------------------------------------------------
+#
+# Keeps only bright white markings
+#
+# ------------------------------------------------------------
+
+lower_white = np.array([0, 0, 170])
+upper_white = np.array([255, 80, 255])
+
+white_mask = cv2.inRange(
+    hsv,
+    lower_white,
+    upper_white
+)
 
 # ------------------------------------------------------------
 # BLUR
 # ------------------------------------------------------------
 
-blur = cv2.GaussianBlur(gray, (5, 5), 0)
+blur = cv2.GaussianBlur(white_mask, (5, 5), 0)
 
 # ------------------------------------------------------------
 # EDGE DETECTION
@@ -60,22 +92,30 @@ edges = cv2.Canny(blur, 50, 150)
 # ------------------------------------------------------------
 # REGION OF INTEREST
 # ------------------------------------------------------------
+#
+# ONLY focus on road region
+#
+# ------------------------------------------------------------
 
 mask = np.zeros_like(edges)
 
 polygon = np.array([[
     
+    # Bottom left
     (0, height),
 
-    (width // 2 - width // 4, height // 2),
+    # Top left
+    (width // 2 - 120, height // 2 + 50),
 
-    (width // 2 + width // 4, height // 2),
+    # Top right
+    (width // 2 + 120, height // 2 + 50),
 
+    # Bottom right
     (width, height)
 
 ]], np.int32)
 
-cv2.fillPoly(mask, [polygon], 255)
+cv2.fillPoly(mask, polygon, 255)
 
 roi = cv2.bitwise_and(edges, mask)
 
@@ -85,18 +125,26 @@ roi = cv2.bitwise_and(edges, mask)
 
 lines = cv2.HoughLinesP(
     roi,
-    rho=2,
+    rho=1,
     theta=np.pi / 180,
-    threshold=80,
-    minLineLength=100,
-    maxLineGap=50
+    threshold=60,
+    minLineLength=120,
+    maxLineGap=40
 )
 
 # ------------------------------------------------------------
-# STORE VALID ROAD LINES
+# STORE VALID LINES
 # ------------------------------------------------------------
 
 valid_lines = []
+
+# ------------------------------------------------------------
+# FILTER LINES
+# ------------------------------------------------------------
+#
+# Keeps ONLY road-like lines
+#
+# ------------------------------------------------------------
 
 if lines is not None:
 
@@ -110,14 +158,35 @@ if lines is not None:
 
         slope = (y2 - y1) / (x2 - x1)
 
-        # Ignore horizontal lines
-        if abs(slope) < 0.4:
+        # ----------------------------------------------------
+        # REMOVE HORIZONTAL LINES
+        # ----------------------------------------------------
+
+        if abs(slope) < 0.5:
             continue
+
+        # ----------------------------------------------------
+        # REMOVE EXTREMELY STEEP LINES
+        # ----------------------------------------------------
+
+        if abs(slope) > 5:
+            continue
+
+        # ----------------------------------------------------
+        # KEEP ONLY LOWER IMAGE LINES
+        # ----------------------------------------------------
+
+        if y1 < height * 0.45 or y2 < height * 0.45:
+            continue
+
+        # ----------------------------------------------------
+        # STORE VALID ROAD LINE
+        # ----------------------------------------------------
 
         valid_lines.append((x1, y1, x2, y2, slope))
 
 # ------------------------------------------------------------
-# SORT LINES BASED ON X POSITION
+# SORT LINES BY POSITION
 # ------------------------------------------------------------
 
 line_positions = []
@@ -126,97 +195,69 @@ for line in valid_lines:
 
     x1, y1, x2, y2, slope = line
 
-    # Use bottom x position
+    # Use bottom-most x coordinate
     if y1 > y2:
-        x_pos = x1
+        bottom_x = x1
     else:
-        x_pos = x2
+        bottom_x = x2
 
-    line_positions.append(x_pos)
+    line_positions.append(bottom_x)
 
-# Sort from left to right
 line_positions = sorted(line_positions)
 
 # ------------------------------------------------------------
-# REMOVE DUPLICATE NEARBY LINES
+# GROUP SIMILAR LINES
 # ------------------------------------------------------------
 #
-# Many Hough lines overlap.
-# We keep only major boundaries.
+# Removes duplicate nearby detections
 #
 # ------------------------------------------------------------
 
-major_boundaries = []
+major_lines = []
 
 for x in line_positions:
 
-    # First boundary
-    if len(major_boundaries) == 0:
-        major_boundaries.append(x)
+    if len(major_lines) == 0:
+
+        major_lines.append(x)
 
     else:
 
-        # Distance from previous boundary
-        distance = abs(x - major_boundaries[-1])
+        distance = abs(x - major_lines[-1])
 
-        # Keep only clearly separated boundaries
-        if distance > 80:
-            major_boundaries.append(x)
+        # Only keep separated lines
+        if distance > 70:
+
+            major_lines.append(x)
 
 # ------------------------------------------------------------
-# DETERMINE NUMBER OF ROADS
+# DETERMINE ROAD COUNT
+# ------------------------------------------------------------
+
+number_of_roads = 1
+road_type = "SINGLE ROAD"
+
+# ------------------------------------------------------------
+# DOUBLE ROAD DETECTION
 # ------------------------------------------------------------
 #
-# LOGIC:
+# Pattern:
 #
-# 2 major boundaries:
-# -> Single road
-#
-# 4 major boundaries:
-# -> Double road
+# Large gap
+# Small divider gap
+# Large gap
 #
 # ------------------------------------------------------------
 
-number_of_roads = 0
-road_type = "UNKNOWN"
+if len(major_lines) >= 4:
 
-boundary_count = len(major_boundaries)
-
-# ------------------------------------------------------------
-# SINGLE ROAD
-# ------------------------------------------------------------
-
-if boundary_count >= 2 and boundary_count < 4:
-
-    number_of_roads = 1
-    road_type = "SINGLE ROAD"
-
-# ------------------------------------------------------------
-# DOUBLE ROAD
-# ------------------------------------------------------------
-
-elif boundary_count >= 4:
-
-    # Calculate spacing between boundaries
     gaps = []
 
-    for i in range(len(major_boundaries) - 1):
+    for i in range(len(major_lines) - 1):
 
-        gap = major_boundaries[i + 1] - major_boundaries[i]
+        gap = major_lines[i + 1] - major_lines[i]
 
         gaps.append(gap)
-
-    # --------------------------------------------------------
-    # CHECK FOR DIVIDER PATTERN
-    # --------------------------------------------------------
-    #
-    # Example:
-    #
-    # Road width = large
-    # Divider width = small
-    # Road width = large
-    #
-    # --------------------------------------------------------
 
     if len(gaps) >= 3:
 
@@ -224,33 +265,61 @@ elif boundary_count >= 4:
         divider = gaps[1]
         road2 = gaps[2]
 
-        # Divider should be smaller
+        # Divider smaller than roads
         if divider < road1 * 0.6 and divider < road2 * 0.6:
 
             number_of_roads = 2
             road_type = "DOUBLE ROAD"
 
+# ------------------------------------------------------------
+# DETECT ROAD DIRECTION
+# ------------------------------------------------------------
+
+direction = "STRAIGHT"
+
+if len(valid_lines) > 0:
+
+    bottom_points = []
+    top_points = []
+
+    for line in valid_lines:
+
+        x1, y1, x2, y2, slope = line
+
+        # Bottom point
+        if y1 > y2:
+
+            bottom_points.append(x1)
+            top_points.append(x2)
+
         else:
 
-            number_of_roads = 1
-            road_type = "WIDE SINGLE ROAD"
+            bottom_points.append(x2)
+            top_points.append(x1)
+
+    avg_bottom = np.mean(bottom_points)
+    avg_top = np.mean(top_points)
+
+    shift = avg_top - avg_bottom
+
+    # --------------------------------------------------------
+    # DETERMINE TURN
+    # --------------------------------------------------------
+
+    if shift < -25:
+
+        direction = "LEFT TURN"
+
+    elif shift > 25:
+
+        direction = "RIGHT TURN"
 
     else:
 
-        number_of_roads = 1
-        road_type = "SINGLE ROAD"
+        direction = "STRAIGHT"
 
 # ------------------------------------------------------------
-# FALLBACK
-# ------------------------------------------------------------
-
-else:
-
-    number_of_roads = 1
-    road_type = "SINGLE ROAD"
-
-# ------------------------------------------------------------
-# CREATE OUTPUT IMAGE
+# DRAW FINAL RESULTS
 # ------------------------------------------------------------
 
 final = original.copy()
@@ -263,11 +332,11 @@ for line in valid_lines:
 
     x1, y1, x2, y2, slope = line
 
-    # Left lines
+    # Left-leaning lines
     if slope < 0:
         color = (0, 255, 0)
 
-    # Right lines
+    # Right-leaning lines
     else:
         color = (255, 0, 0)
 
@@ -276,25 +345,25 @@ for line in valid_lines:
         (x1, y1),
         (x2, y2),
         color,
-        3
+        4
     )
 
 # ------------------------------------------------------------
-# DRAW MAJOR BOUNDARIES
+# DRAW MAJOR ROAD BOUNDARIES
 # ------------------------------------------------------------
 
-for x in major_boundaries:
+for x in major_lines:
 
     cv2.line(
         final,
         (x, height),
-        (x, height - 200),
+        (x, height - 250),
         (0, 255, 255),
         5
     )
 
 # ------------------------------------------------------------
-# DISPLAY ROAD INFORMATION
+# DISPLAY INFORMATION
 # ------------------------------------------------------------
 
 cv2.putText(
@@ -319,7 +388,7 @@ cv2.putText(
 
 cv2.putText(
     final,
-    f"BOUNDARIES DETECTED: {boundary_count}",
+    f"DIRECTION: {direction}",
     (40, 150),
     cv2.FONT_HERSHEY_SIMPLEX,
     1,
@@ -331,53 +400,66 @@ cv2.putText(
 # SHOW RESULTS
 # ------------------------------------------------------------
 
+cv2.imshow("White Line Mask", white_mask)
+
 cv2.imshow("Edges", edges)
 
 cv2.imshow("ROI", roi)
 
-cv2.imshow("Road Detection", final)
+cv2.imshow("Refined Road Detection", final)
 
 cv2.waitKey(0)
 
 cv2.destroyAllWindows()
 
 # ============================================================
-# HOW THIS FIX WORKS
+# WHY THIS VERSION WORKS BETTER
 # ============================================================
 #
-# OLD VERSION:
+# 1. HSV WHITE FILTERING
+# ------------------------------------------------------------
+# Detects ONLY white lane markings.
 #
-# If divider detected:
-# -> Always 2 roads
-#
-#
-# NEW VERSION:
-#
-# It checks:
-#
-# 1. Number of major boundaries
-#
-# 2. Width pattern:
-#
-#    Large Gap
-#    Small Gap
-#    Large Gap
-#
-#    = Double Road
+# Removes:
+# - Grass
+# - Trees
+# - Sky
+# - Shadows
 #
 #
-# Example:
-#
-# |------ROAD------|
-#
-# -> 1 road
+# 2. ROI FILTERING
+# ------------------------------------------------------------
+# Only detects lower road area.
 #
 #
-# Example:
+# 3. SLOPE FILTERING
+# ------------------------------------------------------------
+# Removes:
+# - Horizontal edges
+# - Unrealistic steep edges
+#
+#
+# 4. POSITION FILTERING
+# ------------------------------------------------------------
+# Removes upper-image detections.
+#
+#
+# 5. LINE GROUPING
+# ------------------------------------------------------------
+# Prevents duplicate lane detections.
+#
+#
+# 6. SMART ROAD COUNTING
+# ------------------------------------------------------------
+#
+# Single road:
+#
+# |-----------ROAD-----------|
+#
+#
+# Double road:
 #
 # |---ROAD---||DIVIDER||---ROAD---|
-#
-# -> 2 roads
 #
 # ============================================================
 
@@ -387,7 +469,7 @@ cv2.destroyAllWindows()
 # TERMINAL COMMANDS
 # ============================================================
 #
-# Install libraries:
+# Install:
 #
 # pip install opencv-python numpy
 #
