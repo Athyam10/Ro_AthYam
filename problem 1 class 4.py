@@ -1,475 +1,244 @@
-# ============================================================
-# REFINED UNIVERSAL ROAD EDGE + LANE DETECTION
-# ============================================================
-#
-# THIS VERSION FIXES:
-#
-# ❌ Detecting random edges
-# ❌ Detecting trees/grass
-# ❌ Wrong road count
-# ❌ Weak lane detection
-#
-# ✅ NEW FEATURES:
-#
-# 1. Detects ONLY:
-#       - Outer road edges
-#       - Important lane markings
-#
-# 2. Automatically detects:
-#       - Single road
-#       - Double road
-#
-# 3. Uses:
-#       - Perspective-based ROI
-#       - Strong edge filtering
-#       - Slope filtering
-#       - Position filtering
-#       - Line grouping
-#
-# 4. Detects:
-#       - LEFT TURN
-#       - RIGHT TURN
-#       - STRAIGHT
-#
-# ============================================================
+import argparse
+import glob
+import os
+import sys
 
 import cv2
 import numpy as np
 
-# ------------------------------------------------------------
-# LOAD IMAGE
-# ------------------------------------------------------------
 
-image = cv2.imread("img2.jpeg")
+def resize_image(image, max_width=1200):
+    height, width = image.shape[:2]
+    if width <= max_width:
+        return image
+    scale = max_width / width
+    return cv2.resize(image, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)
 
-if image is None:
-    print("Image not found")
-    exit()
 
-original = image.copy()
+def create_road_mask(image):
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-height, width = image.shape[:2]
+    sat_mask = cv2.inRange(hsv[:, :, 1], np.array([0], dtype=np.uint8), np.array([90], dtype=np.uint8))
+    val_mask = cv2.inRange(hsv[:, :, 2], np.array([50], dtype=np.uint8), np.array([230], dtype=np.uint8))
 
-# ------------------------------------------------------------
-# CONVERT TO HSV
-# ------------------------------------------------------------
-#
-# HSV helps isolate white road markings
-#
-# ------------------------------------------------------------
+    a_channel = lab[:, :, 1]
+    b_channel = lab[:, :, 2]
+    a_mask = cv2.inRange(a_channel, np.array([105], dtype=np.uint8), np.array([145], dtype=np.uint8))
+    b_mask = cv2.inRange(b_channel, np.array([103], dtype=np.uint8), np.array([153], dtype=np.uint8))
+    ab_mask = cv2.bitwise_and(a_mask, b_mask)
 
-hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    gray_mask = cv2.inRange(gray, np.array([40], dtype=np.uint8), np.array([220], dtype=np.uint8))
+    combined = cv2.bitwise_and(sat_mask, val_mask)
+    combined = cv2.bitwise_and(combined, ab_mask)
+    combined = cv2.bitwise_and(combined, gray_mask)
 
-# ------------------------------------------------------------
-# DETECT WHITE ROAD LINES
-# ------------------------------------------------------------
-#
-# Keeps only bright white markings
-#
-# ------------------------------------------------------------
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+    combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel, iterations=2)
+    combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel, iterations=1)
+    combined = cv2.GaussianBlur(combined, (5, 5), 0)
 
-lower_white = np.array([0, 0, 170])
-upper_white = np.array([255, 80, 255])
+    _, combined = cv2.threshold(combined, 50, 255, cv2.THRESH_BINARY)
+    return combined
 
-white_mask = cv2.inRange(
-    hsv,
-    lower_white,
-    upper_white
-)
 
-# ------------------------------------------------------------
-# BLUR
-# ------------------------------------------------------------
+def find_road_contours(mask, image_area):
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    road_contours = []
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < image_area * 0.015:
+            continue
+        x, y, w, h = cv2.boundingRect(contour)
+        aspect_ratio = float(w) / max(h, 1)
+        if area < image_area * 0.04 and (aspect_ratio < 0.25 or aspect_ratio > 4):
+            continue
+        road_contours.append((contour, area, x, y, w, h))
 
-blur = cv2.GaussianBlur(white_mask, (5, 5), 0)
+    road_contours.sort(key=lambda entry: entry[1], reverse=True)
+    return road_contours
 
-# ------------------------------------------------------------
-# EDGE DETECTION
-# ------------------------------------------------------------
 
-edges = cv2.Canny(blur, 50, 150)
+def detect_boundary_lines(mask):
+    edges = cv2.Canny(mask, 50, 150)
+    lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi / 180, threshold=60, minLineLength=80, maxLineGap=30)
+    if lines is None:
+        return edges, []
 
-# ------------------------------------------------------------
-# REGION OF INTEREST
-# ------------------------------------------------------------
-#
-# ONLY focus on road region
-#
-# ------------------------------------------------------------
-
-mask = np.zeros_like(edges)
-
-polygon = np.array([[
-    
-    # Bottom left
-    (0, height),
-
-    # Top left
-    (width // 2 - 120, height // 2 + 50),
-
-    # Top right
-    (width // 2 + 120, height // 2 + 50),
-
-    # Bottom right
-    (width, height)
-
-]], np.int32)
-
-cv2.fillPoly(mask, [polygon], 255)
-
-roi = cv2.bitwise_and(edges, mask)
-
-# ------------------------------------------------------------
-# HOUGH LINE TRANSFORM
-# ------------------------------------------------------------
-
-lines = cv2.HoughLinesP(
-    roi,
-    rho=1,
-    theta=np.pi / 180,
-    threshold=60,
-    minLineLength=120,
-    maxLineGap=40
-)
-
-# ------------------------------------------------------------
-# STORE VALID LINES
-# ------------------------------------------------------------
-
-valid_lines = []
-
-# ------------------------------------------------------------
-# FILTER LINES
-# ------------------------------------------------------------
-#
-# Keeps ONLY road-like lines
-#
-# ------------------------------------------------------------
-
-if lines is not None:
-
+    boundaries = []
     for line in lines:
-
         x1, y1, x2, y2 = line[0]
-
-        # Avoid divide by zero
-        if x2 - x1 == 0:
+        dx = x2 - x1
+        dy = y2 - y1
+        if abs(dx) < 10 and abs(dy) < 10:
             continue
-
-        slope = (y2 - y1) / (x2 - x1)
-
-        # ----------------------------------------------------
-        # REMOVE HORIZONTAL LINES
-        # ----------------------------------------------------
-
-        if abs(slope) < 0.5:
+        slope = dy / dx if dx != 0 else np.inf
+        if abs(slope) < 0.3 and abs(dx) > abs(dy):
             continue
+        mid_x = (x1 + x2) / 2
+        boundaries.append(mid_x)
 
-        # ----------------------------------------------------
-        # REMOVE EXTREMELY STEEP LINES
-        # ----------------------------------------------------
+    boundaries = sorted(boundaries)
+    merged = []
+    for x in boundaries:
+        if not merged or abs(x - merged[-1]) > 80:
+            merged.append(x)
+    return edges, merged
 
-        if abs(slope) > 5:
-            continue
 
-        # ----------------------------------------------------
-        # KEEP ONLY LOWER IMAGE LINES
-        # ----------------------------------------------------
+def draw_detection(image, road_contours, boundaries):
+    output = image.copy()
+    for contour, _, x, y, w, h in road_contours:
+        cv2.drawContours(output, [contour], -1, (0, 255, 0), 3)
+        cv2.rectangle(output, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-        if y1 < height * 0.45 or y2 < height * 0.45:
-            continue
+    height = output.shape[0]
+    for boundary in boundaries:
+        x = int(boundary)
+        cv2.line(output, (x, 0), (x, height), (0, 0, 255), 2)
 
-        # ----------------------------------------------------
-        # STORE VALID ROAD LINE
-        # ----------------------------------------------------
+    return output
 
-        valid_lines.append((x1, y1, x2, y2, slope))
 
-# ------------------------------------------------------------
-# SORT LINES BY POSITION
-# ------------------------------------------------------------
+def estimate_road_count(road_contours, boundary_count):
+    if len(road_contours) > 1:
+        return len(road_contours)
+    if boundary_count >= 4:
+        return 2
+    if boundary_count >= 2:
+        return 1
+    return 0
 
-line_positions = []
 
-for line in valid_lines:
+def format_result(road_count, boundary_count):
+    if road_count == 0:
+        return "No roads detected"
+    if road_count == 1:
+        return f"Roads detected: {road_count} (single road, {boundary_count} boundaries)"
+    return f"Roads detected: {road_count} (multiple roads, {boundary_count} boundaries)"
 
-    x1, y1, x2, y2, slope = line
 
-    # Use bottom-most x coordinate
-    if y1 > y2:
-        bottom_x = x1
+def get_available_images(directory="."):
+    patterns = ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tif", "*.tiff"]
+    files = []
+    for pattern in patterns:
+        files.extend(glob.glob(os.path.join(directory, pattern)))
+    return sorted(files, key=str.lower)
+
+
+def prompt_for_image_path(default="img2.jpeg"):
+    images = get_available_images()
+    if images:
+        print("Available image files in current folder:")
+        for idx, img in enumerate(images, start=1):
+            print(f"  {idx}. {img}")
+        print("Enter a filename or number from the list.")
     else:
-        bottom_x = x2
+        print("No .jpg/.jpeg/.png/.bmp/.tif images found in the current folder.")
 
-    line_positions.append(bottom_x)
+    choice = input(f"Image path to process [{default}]: ").strip()
+    if not choice:
+        choice = default
+    if choice.isdigit():
+        index = int(choice) - 1
+        if 0 <= index < len(images):
+            return images[index]
+    return choice
 
-line_positions = sorted(line_positions)
 
-# ------------------------------------------------------------
-# GROUP SIMILAR LINES
-# ------------------------------------------------------------
-#
-# Removes duplicate nearby detections
-#
-# ------------------------------------------------------------
+def parse_args():
+    parser = argparse.ArgumentParser(description="Road boundary and road count detection")
+    parser.add_argument("image", nargs="?", default="img2.jpeg", help="Image path to process")
+    parser.add_argument("--save", action="store_true", help="Save result images to disk")
+    parser.add_argument("--no-show", action="store_true", help="Do not display GUI windows")
+    parser.add_argument("--show", action="store_true", help="Force GUI windows even if non-interactive")
+    return parser.parse_args()
 
-major_lines = []
 
-for x in line_positions:
+def main():
+    args = parse_args()
+    image_path = args.image
 
-    if len(major_lines) == 0:
-
-        major_lines.append(x)
-
-    else:
-
-        distance = abs(x - major_lines[-1])
-
-        # Only keep separated lines
-        if distance > 70:
-
-            major_lines.append(x)
-
-# ------------------------------------------------------------
-# DETERMINE ROAD COUNT
-# ------------------------------------------------------------
-
-number_of_roads = 1
-road_type = "SINGLE ROAD"
-
-# ------------------------------------------------------------
-# DOUBLE ROAD DETECTION
-# ------------------------------------------------------------
-#
-# Pattern:
-#
-# Large gap
-# Small divider gap
-# Large gap
-#
-# ------------------------------------------------------------
-
-if len(major_lines) >= 4:
-
-    gaps = []
-
-    for i in range(len(major_lines) - 1):
-
-        gap = major_lines[i + 1] - major_lines[i]
-
-        gaps.append(gap)
-
-    if len(gaps) >= 3:
-
-        road1 = gaps[0]
-        divider = gaps[1]
-        road2 = gaps[2]
-
-        # Divider smaller than roads
-        if divider < road1 * 0.6 and divider < road2 * 0.6:
-
-            number_of_roads = 2
-            road_type = "DOUBLE ROAD"
-
-# ------------------------------------------------------------
-# DETECT ROAD DIRECTION
-# ------------------------------------------------------------
-
-direction = "STRAIGHT"
-
-if len(valid_lines) > 0:
-
-    bottom_points = []
-    top_points = []
-
-    for line in valid_lines:
-
-        x1, y1, x2, y2, slope = line
-
-        # Bottom point
-        if y1 > y2:
-
-            bottom_points.append(x1)
-            top_points.append(x2)
-
+    if not os.path.isfile(image_path):
+        print(f"Image not found: {image_path}")
+        if sys.stdin.isatty():
+            image_path = prompt_for_image_path()
+            if not os.path.isfile(image_path):
+                print(f"Image still not found: {image_path}")
+                return
+            print(f"Using image: {image_path}")
         else:
+            print("Provide a real image filename instead of a placeholder.")
+            return
 
-            bottom_points.append(x2)
-            top_points.append(x1)
+    image = cv2.imread(image_path)
+    if image is None:
+        print(f"Failed to read image: {image_path}")
+        return
 
-    avg_bottom = np.mean(bottom_points)
-    avg_top = np.mean(top_points)
+    image = resize_image(image)
+    image_area = image.shape[0] * image.shape[1]
 
-    shift = avg_top - avg_bottom
+    road_mask = create_road_mask(image)
+    road_contours = find_road_contours(road_mask, image_area)
+    edges, boundaries = detect_boundary_lines(road_mask)
+    result_image = draw_detection(image, road_contours, boundaries)
 
-    # --------------------------------------------------------
-    # DETERMINE TURN
-    # --------------------------------------------------------
+    road_count = estimate_road_count(road_contours, len(boundaries))
+    message = format_result(road_count, len(boundaries))
+    print(message)
 
-    if shift < -25:
+    cv2.putText(result_image, message, (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
 
-        direction = "LEFT TURN"
+    if args.save:
+        base = os.path.splitext(os.path.basename(image_path))[0]
+        cv2.imwrite(f"{base}_road_mask.png", road_mask)
+        cv2.imwrite(f"{base}_road_edges.png", edges)
+        cv2.imwrite(f"{base}_road_result.png", result_image)
+        print(f"Saved: {base}_road_mask.png, {base}_road_edges.png, {base}_road_result.png")
 
-    elif shift > 25:
+    # Decide whether to show GUI windows. Default behavior is to show
+    # unless `--no-show` is passed. `--show` forces windows even in non-interactive runs.
+    show_windows = args.show or (not args.no_show)
 
-        direction = "RIGHT TURN"
+    if show_windows:
+        try:
+            # Create and arrange windows so each result appears in its own window
+            cv2.namedWindow("Original", cv2.WINDOW_NORMAL)
+            cv2.namedWindow("Road Mask", cv2.WINDOW_NORMAL)
+            cv2.namedWindow("Road Boundaries", cv2.WINDOW_NORMAL)
+            cv2.namedWindow("Result", cv2.WINDOW_NORMAL)
 
-    else:
+            # Resize windows for readability
+            cv2.resizeWindow("Original", 640, 360)
+            cv2.resizeWindow("Road Mask", 480, 360)
+            cv2.resizeWindow("Road Boundaries", 480, 360)
+            cv2.resizeWindow("Result", 800, 600)
 
-        direction = "STRAIGHT"
+            # Position windows (may be ignored by some window managers)
+            cv2.moveWindow("Original", 50, 50)
+            cv2.moveWindow("Road Mask", 720, 50)
+            cv2.moveWindow("Road Boundaries", 50, 430)
+            cv2.moveWindow("Result", 720, 430)
 
-# ------------------------------------------------------------
-# DRAW FINAL RESULTS
-# ------------------------------------------------------------
+            # Show images
+            cv2.imshow("Original", image)
+            cv2.imshow("Road Mask", road_mask)
+            cv2.imshow("Road Boundaries", edges)
+            cv2.imshow("Result", result_image)
 
-final = original.copy()
-
-# ------------------------------------------------------------
-# DRAW DETECTED ROAD LINES
-# ------------------------------------------------------------
-
-for line in valid_lines:
-
-    x1, y1, x2, y2, slope = line
-
-    # Left-leaning lines
-    if slope < 0:
-        color = (0, 255, 0)
-
-    # Right-leaning lines
-    else:
-        color = (255, 0, 0)
-
-    cv2.line(
-        final,
-        (x1, y1),
-        (x2, y2),
-        color,
-        4
-    )
-
-# ------------------------------------------------------------
-# DRAW MAJOR ROAD BOUNDARIES
-# ------------------------------------------------------------
-
-for x in major_lines:
-
-    cv2.line(
-        final,
-        (x, height),
-        (x, height - 250),
-        (0, 255, 255),
-        5
-    )
-
-# ------------------------------------------------------------
-# DISPLAY INFORMATION
-# ------------------------------------------------------------
-
-cv2.putText(
-    final,
-    f"ROAD TYPE: {road_type}",
-    (40, 50),
-    cv2.FONT_HERSHEY_SIMPLEX,
-    1,
-    (0, 0, 255),
-    3
-)
-
-cv2.putText(
-    final,
-    f"NUMBER OF ROADS: {number_of_roads}",
-    (40, 100),
-    cv2.FONT_HERSHEY_SIMPLEX,
-    1,
-    (255, 0, 0),
-    3
-)
-
-cv2.putText(
-    final,
-    f"DIRECTION: {direction}",
-    (40, 150),
-    cv2.FONT_HERSHEY_SIMPLEX,
-    1,
-    (0, 255, 0),
-    3
-)
-
-# ------------------------------------------------------------
-# SHOW RESULTS
-# ------------------------------------------------------------
-
-cv2.imshow("White Line Mask", white_mask)
-
-cv2.imshow("Edges", edges)
-
-cv2.imshow("ROI", roi)
-
-cv2.imshow("Refined Road Detection", final)
-
-cv2.waitKey(0)
-
-cv2.destroyAllWindows()
-
-# ============================================================
-# WHY THIS VERSION WORKS BETTER
-# ============================================================
-#
-# 1. HSV WHITE FILTERING
-# ------------------------------------------------------------
-# Detects ONLY white lane markings.
-#
-# Removes:
-# - Grass
-# - Trees
-# - Sky
-# - Shadows
-#
-#
-# 2. ROI FILTERING
-# ------------------------------------------------------------
-# Only detects lower road area.
-#
-#
-# 3. SLOPE FILTERING
-# ------------------------------------------------------------
-# Removes:
-# - Horizontal edges
-# - Unrealistic steep edges
-#
-#
-# 4. POSITION FILTERING
-# ------------------------------------------------------------
-# Removes upper-image detections.
-#
-#
-# 5. LINE GROUPING
-# ------------------------------------------------------------
-# Prevents duplicate lane detections.
-#
-#
-# 6. SMART ROAD COUNTING
-# ------------------------------------------------------------
-#
-# Single road:
-#
-# |-----------ROAD-----------|
-#
-#
-# Double road:
-#
-# |---ROAD---||DIVIDER||---ROAD---|
-#
-# ============================================================
+            print("Press any key on one of the image windows to close them.")
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+        except Exception as e:
+            print("Could not open GUI windows:", e)
 
 
+if __name__ == "__main__":
+    main()
 
-# ============================================================
-# TERMINAL COMMANDS
-# ============================================================
-#
-# Install:
+# Install libraries:
 #
 # pip install opencv-python numpy
 #
