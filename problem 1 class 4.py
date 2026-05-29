@@ -87,6 +87,38 @@ def detect_boundary_lines(mask):
     return edges, merged
 
 
+def detect_center_divider(image, road_mask):
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    white = cv2.inRange(hsv, np.array([0, 0, 180]), np.array([180, 40, 255]))
+    yellow = cv2.inRange(hsv, np.array([10, 100, 100]), np.array([35, 255, 255]))
+    line_mask = cv2.bitwise_or(white, yellow)
+
+    edges = cv2.Canny(line_mask, 50, 150)
+    lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi / 180, threshold=30, minLineLength=30, maxLineGap=20)
+    if lines is None:
+        return False
+
+    width = image.shape[1]
+    center_x = width / 2
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        dx = x2 - x1
+        dy = y2 - y1
+        if abs(dx) < 10 and abs(dy) < 10:
+            continue
+        slope = dy / dx if dx != 0 else np.inf
+        
+        # More strict: line must be very vertical (|slope| > 1) to be a divider
+        if slope is not np.inf and abs(slope) < 1.0:
+            continue
+            
+        mid_x = (x1 + x2) / 2
+        if abs(mid_x - center_x) < width * 0.18:
+            return True
+
+    return False
+
+
 def draw_detection(image, road_contours, boundaries):
     output = image.copy()
     for contour, _, x, y, w, h in road_contours:
@@ -102,11 +134,9 @@ def draw_detection(image, road_contours, boundaries):
 
 
 def estimate_road_count(road_contours, boundary_count):
-    if len(road_contours) > 1:
-        return len(road_contours)
-    if boundary_count >= 4:
-        return 2
     if boundary_count >= 2:
+        return boundary_count // 2
+    if road_contours:
         return 1
     return 0
 
@@ -183,10 +213,17 @@ def main():
     road_mask = create_road_mask(image)
     road_contours = find_road_contours(road_mask, image_area)
     edges, boundaries = detect_boundary_lines(road_mask)
+    divider_found = detect_center_divider(image, road_mask)
+
+    boundary_count = len(boundaries)
+    # Only trust divider detection if we already detected 2+ separate road contours
+    if divider_found and len(road_contours) >= 2:
+        boundary_count = 4
+
     result_image = draw_detection(image, road_contours, boundaries)
 
-    road_count = estimate_road_count(road_contours, len(boundaries))
-    message = format_result(road_count, len(boundaries))
+    road_count = estimate_road_count(road_contours, boundary_count)
+    message = format_result(road_count, boundary_count)
     print(message)
 
     cv2.putText(result_image, message, (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
